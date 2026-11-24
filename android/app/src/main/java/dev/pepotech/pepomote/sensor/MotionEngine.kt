@@ -141,6 +141,8 @@ class MotionEngine(
     private var virtualQuatInitialized = false
     private var previousVirtualTimestampNs = 0L
     private var virtualAccelInitialized = false
+    private val filteredVirtualGyro = FloatArray(3)
+    private var virtualFilterInitialized = false
     private var previousVirtualRoll = 0f
     private var previousVirtualPitch = 0f
     /** Reloj real compartido por muestras y respaldo: una ráfaga de callbacks no acelera INPUT. */
@@ -325,11 +327,14 @@ class MotionEngine(
                 if (vectorLength > 1e-6f) {
                     val angle = 2f * kotlin.math.atan2(vectorLength, dw.coerceIn(-1f, 1f))
                     val scale = (angle / vectorLength) * (1_000_000_000f / dtNs.toFloat())
-                    latestGyro[0] = (dx * scale).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S)
-                    latestGyro[1] = (dy * scale).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S)
-                    latestGyro[2] = (dz * scale).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S)
+                    smoothVirtualGyro(
+                        (dx * scale).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S),
+                        (dy * scale).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S),
+                        (dz * scale).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S),
+                        dtNs
+                    )
                 } else {
-                    latestGyro.fill(0f)
+                    smoothVirtualGyro(0f, 0f, 0f, dtNs)
                 }
                 lastGyroNs = timestampNs
             } else {
@@ -362,9 +367,12 @@ class MotionEngine(
                 if (rollDelta < -Math.PI) rollDelta += (2f * Math.PI).toFloat()
                 if (pitchDelta > Math.PI) pitchDelta -= (2f * Math.PI).toFloat()
                 if (pitchDelta < -Math.PI) pitchDelta += (2f * Math.PI).toFloat()
-                latestGyro[0] = (rollDelta / dt).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S)
-                latestGyro[1] = (pitchDelta / dt).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S)
-                latestGyro[2] = 0f
+                smoothVirtualGyro(
+                    (rollDelta / dt).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S),
+                    (pitchDelta / dt).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S),
+                    0f,
+                    dtNs
+                )
                 lastGyroNs = timestampNs
             } else {
                 latestGyro.fill(0f)
@@ -375,6 +383,31 @@ class MotionEngine(
         previousVirtualPitch = pitch
         virtualAccelInitialized = true
         previousVirtualTimestampNs = timestampNs
+    }
+
+    /**
+     * Filtra el ruido de los sensores de orientación antes de convertirlo en
+     * movimiento del mando. La zona muerta elimina microtemblores en reposo;
+     * el filtro exponencial conserva el movimiento intencional sin saltos.
+     */
+    private fun smoothVirtualGyro(x: Float, y: Float, z: Float, dtNs: Long) {
+        val dt = (dtNs / 1_000_000_000f).coerceIn(0.001f, 0.1f)
+        val alpha = dt / (VIRTUAL_GYRO_SMOOTHING_SECONDS + dt)
+        val raw = floatArrayOf(x, y, z)
+        for (i in 0..2) {
+            val target = if (kotlin.math.abs(raw[i]) < VIRTUAL_GYRO_DEAD_BAND) 0f else raw[i]
+            if (!virtualFilterInitialized) {
+                filteredVirtualGyro[i] = target
+            } else {
+                filteredVirtualGyro[i] += alpha * (target - filteredVirtualGyro[i])
+            }
+            latestGyro[i] = if (kotlin.math.abs(filteredVirtualGyro[i]) < VIRTUAL_GYRO_OUTPUT_DEAD_BAND) {
+                0f
+            } else {
+                filteredVirtualGyro[i]
+            }
+        }
+        virtualFilterInitialized = true
     }
 
     private fun consumeGyro() {
@@ -607,6 +640,9 @@ class MotionEngine(
         const val HOLD_GRACE_NS = 300_000_000L
         const val GYRO_STALE_NS = 50_000_000L
         const val MAX_VIRTUAL_GYRO_RAD_S = 12f
+        const val VIRTUAL_GYRO_DEAD_BAND = 0.25f
+        const val VIRTUAL_GYRO_OUTPUT_DEAD_BAND = 0.10f
+        const val VIRTUAL_GYRO_SMOOTHING_SECONDS = 0.12f
         const val FALLBACK_INTERVAL_MS = 10L
         const val FALLBACK_INTERVAL_NS = FALLBACK_INTERVAL_MS * 1_000_000L
     }
