@@ -134,7 +134,15 @@ class MotionEngine(
     private var gyroRegistered = false
     private var accelRegistered = false
     private var rotationRegistered = false
+    private var geomagneticRegistered = false
     private var hasRotationVector = false
+    // Estimación de velocidad angular cuando el móvil no tiene giroscopio físico.
+    private val previousVirtualQuat = FloatArray(4)
+    private var virtualQuatInitialized = false
+    private var previousVirtualTimestampNs = 0L
+    private var virtualAccelInitialized = false
+    private var previousVirtualRoll = 0f
+    private var previousVirtualPitch = 0f
     /** Reloj real compartido por muestras y respaldo: una ráfaga de callbacks no acelera INPUT. */
     private var lastSendNs = 0L
     private val buttonChanges = ConcurrentLinkedQueue<ButtonState.Change>()
@@ -202,7 +210,13 @@ class MotionEngine(
         ButtonState.addButtonChangeListener(onButtonChange)
         gyroRegistered = register(Sensor.TYPE_GYROSCOPE)
         accelRegistered = register(Sensor.TYPE_ACCELEROMETER)
-        rotationRegistered = register(Sensor.TYPE_GAME_ROTATION_VECTOR)
+        if (gyroRegistered) {
+            rotationRegistered = register(Sensor.TYPE_GAME_ROTATION_VECTOR)
+        } else {
+            // Este vector usa acelerómetro + magnetómetro y no necesita gyro.
+            geomagneticRegistered = register(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
+            rotationRegistered = geomagneticRegistered
+        }
         handler.postDelayed(fallback, FALLBACK_INTERVAL_MS)
     }
 
@@ -230,13 +244,15 @@ class MotionEngine(
     override fun onSensorChanged(event: SensorEvent) {
         if (!running) return
         when (event.sensor.type) {
-            Sensor.TYPE_GAME_ROTATION_VECTOR -> {
-                if (!rotationRegistered) return
+            Sensor.TYPE_GAME_ROTATION_VECTOR, Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR -> {
+                if (event.sensor.type == Sensor.TYPE_GAME_ROTATION_VECTOR && !rotationRegistered) return
+                if (event.sensor.type == Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR && !geomagneticRegistered) return
                 SensorManager.getQuaternionFromVector(scratch, event.values)
                 // getQuaternionFromVector devuelve [w, x, y, z]
                 quat[0] = scratch[0]; quat[1] = scratch[1]
                 quat[2] = scratch[2]; quat[3] = scratch[3]
                 hasRotationVector = true
+                if (!gyroRegistered) updateVirtualGyroFromQuaternion(event.timestamp)
             }
 
             Sensor.TYPE_ACCELEROMETER -> {
@@ -244,6 +260,9 @@ class MotionEngine(
                 accel[0] = event.values[0]
                 accel[1] = event.values[1]
                 accel[2] = event.values[2]
+                if (!gyroRegistered && !geomagneticRegistered) {
+                    updateVirtualGyroFromAccelerometer(event.timestamp, accel)
+                }
             }
 
             Sensor.TYPE_GYROSCOPE -> {
@@ -274,6 +293,88 @@ class MotionEngine(
                 }
             }
         }
+    }
+
+    /**
+     * Convierte cambios de orientación en una velocidad angular aproximada.
+     * Solo se usa sin gyro físico: geomagnetic rotation vector (acelerómetro +
+     * magnetómetro). No puede recuperar el giro alrededor de la gravedad con
+     * la misma precisión que un sensor giroscópico real.
+     */
+    private fun updateVirtualGyroFromQuaternion(timestampNs: Long) {
+        if (virtualQuatInitialized) {
+            val dtNs = timestampNs - previousVirtualTimestampNs
+            if (dtNs in 1_000_000L..100_000_000L) {
+                val pw = previousVirtualQuat[0]
+                val px = previousVirtualQuat[1]
+                val py = previousVirtualQuat[2]
+                val pz = previousVirtualQuat[3]
+                val cw = quat[0]
+                val cx = quat[1]
+                val cy = quat[2]
+                val cz = quat[3]
+                // delta = conjugate(previous) * current
+                var dw = pw * cw + px * cx + py * cy + pz * cz
+                var dx = pw * cx - px * cw - py * cz + pz * cy
+                var dy = pw * cy + px * cz - py * cw - pz * cx
+                var dz = pw * cz - px * cy + py * cx - pz * cw
+                if (dw < 0f) {
+                    dw = -dw; dx = -dx; dy = -dy; dz = -dz
+                }
+                val vectorLength = kotlin.math.sqrt(dx * dx + dy * dy + dz * dz)
+                if (vectorLength > 1e-6f) {
+                    val angle = 2f * kotlin.math.atan2(vectorLength, dw.coerceIn(-1f, 1f))
+                    val scale = (angle / vectorLength) * (1_000_000_000f / dtNs.toFloat())
+                    latestGyro[0] = (dx * scale).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S)
+                    latestGyro[1] = (dy * scale).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S)
+                    latestGyro[2] = (dz * scale).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S)
+                } else {
+                    latestGyro.fill(0f)
+                }
+                lastGyroNs = timestampNs
+            } else {
+                latestGyro.fill(0f)
+                lastGyroNs = 0L
+            }
+        }
+        System.arraycopy(quat, 0, previousVirtualQuat, 0, 4)
+        virtualQuatInitialized = true
+        previousVirtualTimestampNs = timestampNs
+    }
+
+    /**
+     * Último respaldo: estima solo inclinación (pitch/roll) desde gravedad.
+     * El eje yaw queda a cero porque un acelerómetro no puede medirlo.
+     */
+    private fun updateVirtualGyroFromAccelerometer(timestampNs: Long, values: FloatArray) {
+        val ax = values[0]
+        val ay = values[1]
+        val az = values[2]
+        val roll = kotlin.math.atan2(ay, az)
+        val pitch = kotlin.math.atan2(-ax, kotlin.math.sqrt(ay * ay + az * az))
+        if (virtualAccelInitialized) {
+            val dtNs = timestampNs - previousVirtualTimestampNs
+            if (dtNs in 1_000_000L..100_000_000L) {
+                val dt = dtNs / 1_000_000_000f
+                var rollDelta = roll - previousVirtualRoll
+                var pitchDelta = pitch - previousVirtualPitch
+                if (rollDelta > Math.PI) rollDelta -= (2f * Math.PI).toFloat()
+                if (rollDelta < -Math.PI) rollDelta += (2f * Math.PI).toFloat()
+                if (pitchDelta > Math.PI) pitchDelta -= (2f * Math.PI).toFloat()
+                if (pitchDelta < -Math.PI) pitchDelta += (2f * Math.PI).toFloat()
+                latestGyro[0] = (rollDelta / dt).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S)
+                latestGyro[1] = (pitchDelta / dt).coerceIn(-MAX_VIRTUAL_GYRO_RAD_S, MAX_VIRTUAL_GYRO_RAD_S)
+                latestGyro[2] = 0f
+                lastGyroNs = timestampNs
+            } else {
+                latestGyro.fill(0f)
+                lastGyroNs = 0L
+            }
+        }
+        previousVirtualRoll = roll
+        previousVirtualPitch = pitch
+        virtualAccelInitialized = true
+        previousVirtualTimestampNs = timestampNs
     }
 
     private fun consumeGyro() {
@@ -505,6 +606,7 @@ class MotionEngine(
         /** Gracia tras cerrar el teclado antes de volver a los sensores reales. */
         const val HOLD_GRACE_NS = 300_000_000L
         const val GYRO_STALE_NS = 50_000_000L
+        const val MAX_VIRTUAL_GYRO_RAD_S = 12f
         const val FALLBACK_INTERVAL_MS = 10L
         const val FALLBACK_INTERVAL_NS = FALLBACK_INTERVAL_MS * 1_000_000L
     }
