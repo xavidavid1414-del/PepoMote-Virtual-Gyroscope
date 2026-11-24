@@ -646,7 +646,7 @@ class MotionEngine(
         const val MAX_VIRTUAL_GYRO_RAD_S = 3.0f
         const val VIRTUAL_GYRO_DEAD_BAND = 0.65f
         const val VIRTUAL_GYRO_OUTPUT_DEAD_BAND = 0.22f
-        const val VIRTUAL_GYRO_SMOOTHING_SECONDS = 0.20f
+        const val VIRTUAL_GYRO_SMOOTHING_SECONDS = 0.01f
         const val FALLBACK_INTERVAL_MS = 10L
         const val FALLBACK_INTERVAL_NS = FALLBACK_INTERVAL_MS * 1_000_000L
     }
