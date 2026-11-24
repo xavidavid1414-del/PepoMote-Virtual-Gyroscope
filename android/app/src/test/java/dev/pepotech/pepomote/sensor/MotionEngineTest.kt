@@ -279,6 +279,23 @@ class MotionEngineTest {
         assertEquals(0, ByteBuffer.wrap(released).order(ByteOrder.LITTLE_ENDIAN).getShort(70).toInt())
     }
 
+    @Test fun geomagneticVectorGeneratesVirtualGyroWithoutPhysicalGyroscope() {
+        val geomagnetic = sensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
+        val packets = mutableListOf<ByteArray>()
+        engine(SenderKind.WIIMOTE, packets).start()
+
+        // Quaternion identity, then 0.2 rad around X after 20 ms.
+        emit(geomagnetic, 0f, 0f, 0f, 1f)
+        advance(20)
+        val half = 0.1f
+        emit(geomagnetic, kotlin.math.sin(half), 0f, 0f, kotlin.math.cos(half))
+        advance(20)
+
+        assertTrue("the virtual gyro emits angular velocity", packets.any {
+            kotlin.math.abs(it.floats(40, 3)[0]) > 1f
+        })
+    }
+
     @Test fun accelerometerWorksWithoutGyroOrRotationVector() {
         val accel = sensor(Sensor.TYPE_ACCELEROMETER)
         val packets = mutableListOf<ByteArray>()
