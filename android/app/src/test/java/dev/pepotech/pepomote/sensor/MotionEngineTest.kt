@@ -296,6 +296,26 @@ class MotionEngineTest {
         })
     }
 
+    @Test fun virtualGyroSuppressesTinyStationaryOrientationNoise() {
+        val geomagnetic = sensor(Sensor.TYPE_GEOMAGNETIC_ROTATION_VECTOR)
+        val packets = mutableListOf<ByteArray>()
+        engine(SenderKind.WIIMOTE, packets).start()
+
+        // Tiny orientation changes simulate compass/rotation-vector jitter at rest.
+        emit(geomagnetic, 0f, 0f, 0f, 1f)
+        repeat(12) {
+            advance(20)
+            val halfAngle = (it + 1) * 0.001f
+            emit(geomagnetic, kotlin.math.sin(halfAngle), 0f, 0f, kotlin.math.cos(halfAngle))
+        }
+        advance(30)
+
+        assertTrue("small sensor jitter must not move player two",
+            packets.isNotEmpty() && packets.all { packet ->
+                packet.floats(40, 3).all { kotlin.math.abs(it) < 0.0001f }
+            })
+    }
+
     @Test fun accelerometerWorksWithoutGyroOrRotationVector() {
         val accel = sensor(Sensor.TYPE_ACCELEROMETER)
         val packets = mutableListOf<ByteArray>()
