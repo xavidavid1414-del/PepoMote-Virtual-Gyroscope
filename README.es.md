@@ -1,6 +1,6 @@
-<p align="center"><img src="assets/brand/logo.png" width="96" alt="PepoMote"></p>
+<p align="center"><img src="assets/brand/logo.png" width="96" alt="XavrxMote"></p>
 
-<h1 align="center">PepoMote</h1>
+<h1 align="center">XavrxMote</h1>
 <p align="center"><b>Apunta. Haz clic. Juega.</b> - Convierte tu móvil en un puntero y mando con movimiento para tu PC, o conecta dos Android para jugar.</p>
 
 **[English](README.md)**
