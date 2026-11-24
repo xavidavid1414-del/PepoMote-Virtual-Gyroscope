@@ -1,0 +1,39 @@
+name: XavrxMote Android verification
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "android/**"
+      - ".github/workflows/xavrxmote-android.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - ".github/workflows/xavrxmote-android.yml"
+  workflow_dispatch:
+
+jobs:
+  android:
+    name: Android unit tests and debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+      - name: Make Gradle wrapper executable
+        working-directory: android
+        run: chmod +x ./gradlew
+      - name: Run tests and build APK
+        working-directory: android
+        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: XavrxMote-debug-apk
+          path: android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
