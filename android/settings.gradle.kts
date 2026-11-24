@@ -12,5 +12,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "PepoMote"
+rootProject.name = "XavrxMote"
 include(":app")
