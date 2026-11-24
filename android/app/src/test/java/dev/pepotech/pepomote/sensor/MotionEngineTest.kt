@@ -306,6 +306,21 @@ class MotionEngineTest {
         assertArrayEquals(floatArrayOf(-2f, 1f, 9.8f), packets.last().floats(52, 3), 0.0001f)
     }
 
+    @Test fun accelerometerTiltProducesApproximateVirtualGyroWhenNoOtherOrientationSensorExists() {
+        val accel = sensor(Sensor.TYPE_ACCELEROMETER)
+        val packets = mutableListOf<ByteArray>()
+        engine(SenderKind.WIIMOTE, packets).start()
+
+        emit(accel, 0f, 0f, 9.8f)
+        advance(20)
+        emit(accel, 1f, 0f, 9.75f)
+        advance(20)
+
+        assertTrue("tilt changes create an approximate angular rate", packets.any {
+            kotlin.math.abs(it.floats(40, 3)[1]) > 1f
+        })
+    }
+
     @Test fun failedSensorRegistrationStillSendsNeutralInput() {
         sensor(Sensor.TYPE_GYROSCOPE)
         sensor(Sensor.TYPE_ACCELEROMETER)
