@@ -1,6 +1,6 @@
-<p align="center"><img src="assets/brand/logo.png" width="96" alt="PepoMote"></p>
+<p align="center"><img src="assets/brand/logo.png" width="96" alt="XavrxMote"></p>
 
-<h1 align="center">PepoMote</h1>
+<h1 align="center">XavrxMote</h1>
 <p align="center"><b>Point. Click. Play.</b> - Turn your phone into a motion pointer and controller for your PC, or connect two Android devices to play.</p>
 
 **[Español](README.es.md)**
