@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -60,22 +61,29 @@ fun AnalogStick(sizeDp: Dp, onStick: (x: Int, y: Int) -> Unit) {
             .border(1.5.dp, if (active) PepoColors.Glow else PepoColors.CardBorder, CircleShape)
             .pointerInput(sizeDp) {
                 var centered = true
+                var smoothedX = 0f
+                var smoothedY = 0f
                 awaitEachGesture {
                     // Geometría por gesto: siempre la del layout actual
                     val center = Offset(size.width / 2f, size.height / 2f)
                     val travel = (size.width - knobDp.toPx()) / 2f // recorrido del pomo
                     fun move(pos: Offset) {
                         val d = pos - center
-                        val len = d.getDistance()
-                        // Límite rectangular invisible: el pomo no puede salir
-                        // de esta zona aunque el dedo siga arrastrándose fuera.
+                        // Límite rectangular: coincide con el marco visible.
                         val bounded = Offset(
                             x = d.x.coerceIn(-travel, travel),
                             y = d.y.coerceIn(-travel, travel)
                         )
                         knob = bounded
-                        val (x, y) = StickMap.map(bounded.x, bounded.y, travel)
-                        val atCenter = x == 0 && y == 0
+                        val (rawX, rawY) = StickMap.map(bounded.x, bounded.y, travel)
+                        // Menor sensibilidad y transición gradual para evitar tirones.
+                        val targetX = rawX * 0.72f
+                        val targetY = rawY * 0.72f
+                        smoothedX += (targetX - smoothedX) * 0.32f
+                        smoothedY += (targetY - smoothedY) * 0.32f
+                        val x = smoothedX.roundToInt().coerceIn(-127, 127)
+                        val y = smoothedY.roundToInt().coerceIn(-127, 127)
+                        val atCenter = rawX == 0 && rawY == 0
                         if (centered && !atCenter) {
                             Haptics.tap(view, HapticFeedbackConstants.CLOCK_TICK)
                         }
@@ -92,12 +100,20 @@ fun AnalogStick(sizeDp: Dp, onStick: (x: Int, y: Int) -> Unit) {
                     }
                     active = false
                     knob = Offset.Zero
+                    smoothedX = 0f
+                    smoothedY = 0f
                     centered = true
                     onStick(0, 0)
                 }
             },
         contentAlignment = Alignment.Center
     ) {
+        // Marco rectangular visible: delimita exactamente el recorrido permitido.
+        Box(
+            Modifier
+                .size(sizeDp - knobDp)
+                .border(1.5.dp, PepoColors.Glow, RoundedCornerShape(6.dp))
+        )
         // Marcas de los cuatro ejes: orientan el pulgar sin mirar
         for ((ax, ay) in listOf(0f to -1f, 0f to 1f, -1f to 0f, 1f to 0f)) {
             Box(
