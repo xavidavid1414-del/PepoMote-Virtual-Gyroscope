@@ -393,7 +393,7 @@ class MotionEngine(
     private fun smoothVirtualGyro(x: Float, y: Float, z: Float, dtNs: Long) {
         val dt = (dtNs / 1_000_000_000f).coerceIn(0.001f, 0.1f)
         val alpha = dt / (VIRTUAL_GYRO_SMOOTHING_SECONDS + dt)
-        val raw = floatArrayOf(x, y, z)
+        val raw = floatArrayOf(x * VIRTUAL_GYRO_GAIN, y * VIRTUAL_GYRO_GAIN, z * VIRTUAL_GYRO_GAIN)
         for (i in 0..2) {
             val target = if (kotlin.math.abs(raw[i]) < VIRTUAL_GYRO_DEAD_BAND) 0f else raw[i]
             if (!virtualFilterInitialized) {
@@ -639,10 +639,14 @@ class MotionEngine(
         /** Gracia tras cerrar el teclado antes de volver a los sensores reales. */
         const val HOLD_GRACE_NS = 300_000_000L
         const val GYRO_STALE_NS = 50_000_000L
-        const val MAX_VIRTUAL_GYRO_RAD_S = 12f
-        const val VIRTUAL_GYRO_DEAD_BAND = 0.25f
-        const val VIRTUAL_GYRO_OUTPUT_DEAD_BAND = 0.10f
-        const val VIRTUAL_GYRO_SMOOTHING_SECONDS = 0.12f
+        // A virtual gyro is much noisier than a physical gyro. Keep its gain
+        // deliberately low so tiny compass/accelerometer changes cannot
+        // launch the cursor/player, and cap extreme one-frame spikes.
+        const val VIRTUAL_GYRO_GAIN = 0.30f
+        const val MAX_VIRTUAL_GYRO_RAD_S = 3.0f
+        const val VIRTUAL_GYRO_DEAD_BAND = 0.65f
+        const val VIRTUAL_GYRO_OUTPUT_DEAD_BAND = 0.22f
+        const val VIRTUAL_GYRO_SMOOTHING_SECONDS = 0.20f
         const val FALLBACK_INTERVAL_MS = 10L
         const val FALLBACK_INTERVAL_NS = FALLBACK_INTERVAL_MS * 1_000_000L
     }
