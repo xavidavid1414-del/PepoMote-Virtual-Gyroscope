@@ -67,8 +67,14 @@ fun AnalogStick(sizeDp: Dp, onStick: (x: Int, y: Int) -> Unit) {
                     fun move(pos: Offset) {
                         val d = pos - center
                         val len = d.getDistance()
-                        knob = if (len > travel) d * (travel / len) else d
-                        val (x, y) = StickMap.map(d.x, d.y, travel)
+                        // Límite rectangular invisible: el pomo no puede salir
+                        // de esta zona aunque el dedo siga arrastrándose fuera.
+                        val bounded = Offset(
+                            x = d.x.coerceIn(-travel, travel),
+                            y = d.y.coerceIn(-travel, travel)
+                        )
+                        knob = bounded
+                        val (x, y) = StickMap.map(bounded.x, bounded.y, travel)
                         val atCenter = x == 0 && y == 0
                         if (centered && !atCenter) {
                             Haptics.tap(view, HapticFeedbackConstants.CLOCK_TICK)
